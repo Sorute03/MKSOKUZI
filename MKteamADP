@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>戦績一覧</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  body { font-family: sans-serif; padding: 20px; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+  th, td { border: 1px solid #ccc; padding: 6px; }
+  th { background: #eee; }
+  details { margin-bottom: 20px; }
+</style>
+</head>
+<body>
+
+<h1>戦績一覧（フィルター + グラフ）</h1>
+
+<!-- フィルター UI -->
+<div>
+  <label>自チーム：</label>
+  <select id="filterMyTeam"><option value="ALL">ALL</option></select>
+
+  <label>敵チーム：</label>
+  <select id="filterEnemy"><option value="ALL">ALL</option></select>
+
+  <label>形式：</label>
+  <select id="filterFormat">
+    <option value="ALL">ALL</option>
+    <option value="6v6">6v6</option>
+    <option value="8v8">8v8</option>
+    <option value="12v12">12v12</option>
+  </select>
+
+  <label>コース：</label>
+  <select id="filterCourse"><option value="ALL">ALL</option></select>
+</div>
+
+<hr>
+
+<!-- グラフ表示 -->
+<h2>勝率・平均得点・平均順位（フィルター後）</h2>
+<canvas id="statsChart" width="600" height="300"></canvas>
+
+<hr>
+
+<!-- 試合一覧 -->
+<div id="matchList"></div>
+
+<script>
+async function loadMatches() {
+  const res = await fetch("data/matches.json");
+  return await res.json();
+}
+
+function populateFilters(matches) {
+  const myTeamSet = new Set();
+  const enemySet = new Set();
+  const courseSet = new Set();
+
+  matches.forEach(match => {
+    match.matchRows.forEach(row => {
+      const myTeam = row[15];
+      const enemies = [row[16], row[17], row[18]];
+      const course = row[1];
+
+      if (myTeam) myTeamSet.add(myTeam);
+      enemies.forEach(e => { if (e) enemySet.add(e); });
+      if (course) courseSet.add(course);
+    });
+  });
+
+  const myTeamSel = document.getElementById("filterMyTeam");
+  const enemySel = document.getElementById("filterEnemy");
+  const courseSel = document.getElementById("filterCourse");
+
+  [...myTeamSet].forEach(t => myTeamSel.innerHTML += `<option>${t}</option>`);
+  [...enemySet].forEach(t => enemySel.innerHTML += `<option>${t}</option>`);
+  [...courseSet].forEach(c => courseSel.innerHTML += `<option>${c}</option>`);
+}
+
+function matchPassesFilter(match, filters) {
+  const { myTeam, enemy, format, course } = filters;
+
+  let myTeamName = "";
+  let enemyNames = [];
+  let matchFormat = "";
+
+  match.matchRows.forEach(row => {
+    const round = Number(row[0]);
+    if (round === 1) {
+      myTeamName = row[15];
+      enemyNames = [row[16], row[17], row[18]].filter(v => v);
+      matchFormat = row[19];
+    }
+  });
+
+  if (myTeam !== "ALL" && myTeamName !== myTeam) return false;
+  if (enemy !== "ALL" && !enemyNames.includes(enemy)) return false;
+  if (format !== "ALL" && matchFormat !== format) return false;
+
+  if (course !== "ALL") {
+    const hasCourse = match.matchRows.some(row => row[1] === course);
+    if (!hasCourse) return false;
+  }
+
+  return true;
+}
+
+function renderMatches(matches) {
+  const container = document.getElementById("matchList");
+  container.innerHTML = "";
+
+  matches.forEach((match, idx) => {
+    const div = document.createElement("div");
+    div.innerHTML = `
+      <h2>試合 ${idx + 1}（${match.sheet}）</h2>
+      <details>
+        <summary>詳細を表示</summary>
+        <table>
+          ${match.matchRows.map(row => `
+            <tr>${row.map(col => `<td>${col}</td>`).join("")}</tr>
+          `).join("")}
+        </table>
+      </details>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function calcStats(matches) {
+  let wins = 0, loses = 0, draws = 0;
+  let totalScore = 0, totalRank = 0;
+  let trials = 0;
+
+  matches.forEach(match => {
+    match.matchRows.forEach(row => {
+      const myScore = parseInt(row[3]);
+      const myRank = parseInt(row[2]);
+      const enemyScores = [
+        parseInt(row[6]),
+        parseInt(row[9]),
+        parseInt(row[12])
+      ].filter(n => !isNaN(n));
+
+      if (isNaN(myScore) || isNaN(myRank)) return;
+
+      trials++;
+      totalScore += myScore;
+      totalRank += myRank;
+
+      const isWin = enemyScores.every(s => myScore > s);
+      const isLose = enemyScores.every(s => myScore < s);
+
+      if (isWin) wins++;
+      else if (isLose) loses++;
+      else draws++;
+    });
+  });
+
+  return {
+    winRate: trials ? wins / trials : 0,
+    avgScore: trials ? totalScore / trials : 0,
+    avgRank: trials ? totalRank / trials : 0
+  };
+}
+
+let chart;
+
+function renderChart(stats) {
+  const ctx = document.getElementById("statsChart");
+
+  if (chart) chart.destroy();
+
+  chart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: ["勝率", "平均得点", "平均順位"],
+      datasets: [{
+        label: "戦績分析",
+        data: [stats.winRate, stats.avgScore, stats.avgRank],
+        backgroundColor: ["#4caf50", "#2196f3", "#ff9800"]
+      }]
+    },
+    options: {
+      scales: {
+        y: { beginAtZero: true }
+      }
+    }
+  });
+}
+
+function applyFilters(allMatches) {
+  const filters = {
+    myTeam: document.getElementById("filterMyTeam").value,
+    enemy: document.getElementById("filterEnemy").value,
+    format: document.getElementById("filterFormat").value,
+    course: document.getElementById("filterCourse").value
+  };
+
+  const filtered = allMatches.filter(m => matchPassesFilter(m, filters));
+
+  renderMatches(filtered);
+
+  const stats = calcStats(filtered);
+  renderChart(stats);
+}
+
+(async () => {
+  const matches = await loadMatches();
+  populateFilters(matches);
+
+  renderMatches(matches);
+  renderChart(calcStats(matches));
+
+  ["filterMyTeam", "filterEnemy", "filterFormat", "filterCourse"].forEach(id => {
+    document.getElementById(id).addEventListener("change", () => applyFilters(matches));
+  });
+})();
+</script>
+
+</body>
+</html>
