@@ -1,20 +1,21 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<title>戦績一覧</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<style>
-  body { font-family: sans-serif; padding: 20px; }
-  table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
-  th, td { border: 1px solid #ccc; padding: 6px; }
-  th { background: #eee; }
-  details { margin-bottom: 20px; }
-</style>
+  <meta charset="UTF-8">
+  <title>戦績分析ページ（フル機能版）</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+    th, td { border: 1px solid #ccc; padding: 6px; }
+    th { background: #eee; }
+    details { margin-bottom: 20px; }
+    h2 { margin-top: 40px; }
+  </style>
 </head>
 <body>
 
-<h1>戦績一覧（フィルター + グラフ）</h1>
+<h1>戦績分析ページ（フル機能）</h1>
 
 <!-- フィルター UI -->
 <div>
@@ -38,13 +39,44 @@
 
 <hr>
 
-<!-- グラフ表示 -->
+<!-- 基本統計グラフ -->
 <h2>勝率・平均得点・平均順位（フィルター後）</h2>
 <canvas id="statsChart" width="600" height="300"></canvas>
 
 <hr>
 
+<!-- コース別勝率グラフ -->
+<h2>コース別勝率グラフ</h2>
+<canvas id="courseChart" width="600" height="300"></canvas>
+
+<hr>
+
+<!-- 敵チーム別勝率グラフ -->
+<h2>敵チーム別勝率グラフ</h2>
+<canvas id="enemyChart" width="600" height="300"></canvas>
+
+<hr>
+
+<!-- コース × 敵チーム クロス分析グラフ -->
+<h2>コース × 敵チーム クロス分析グラフ</h2>
+<div id="courseEnemyCharts"></div>
+
+<hr>
+
+<!-- 敵チーム別 時系列勝率推移グラフ -->
+<h2>敵チーム別 時系列勝率推移グラフ</h2>
+<canvas id="enemyTimelineChart" width="600" height="300"></canvas>
+
+<hr>
+
+<!-- 敵チーム別 平均得点推移グラフ -->
+<h2>敵チーム別 平均得点推移グラフ</h2>
+<canvas id="enemyScoreTimelineChart" width="600" height="300"></canvas>
+
+<hr>
+
 <!-- 試合一覧 -->
+<h2>試合一覧</h2>
 <div id="matchList"></div>
 
 <script>
@@ -114,7 +146,7 @@ function renderMatches(matches) {
   matches.forEach((match, idx) => {
     const div = document.createElement("div");
     div.innerHTML = `
-      <h2>試合 ${idx + 1}（${match.sheet}）</h2>
+      <h3>試合 ${idx + 1}（${match.sheet}）</h3>
       <details>
         <summary>詳細を表示</summary>
         <table>
@@ -149,8 +181,8 @@ function calcStats(matches) {
       totalScore += myScore;
       totalRank += myRank;
 
-      const isWin = enemyScores.every(s => myScore > s);
-      const isLose = enemyScores.every(s => myScore < s);
+      const isWin = enemyScores.length > 0 && enemyScores.every(s => myScore > s);
+      const isLose = enemyScores.length > 0 && enemyScores.every(s => myScore < s);
 
       if (isWin) wins++;
       else if (isLose) loses++;
@@ -165,14 +197,14 @@ function calcStats(matches) {
   };
 }
 
-let chart;
+let statsChart;
 
-function renderChart(stats) {
+function renderStatsChart(stats) {
   const ctx = document.getElementById("statsChart");
 
-  if (chart) chart.destroy();
+  if (statsChart) statsChart.destroy();
 
-  chart = new Chart(ctx, {
+  statsChart = new Chart(ctx, {
     type: "bar",
     data: {
       labels: ["勝率", "平均得点", "平均順位"],
@@ -182,6 +214,382 @@ function renderChart(stats) {
         backgroundColor: ["#4caf50", "#2196f3", "#ff9800"]
       }]
     },
+    options: {
+      scales: {
+        y: { beginAtZero: true }
+      }
+    }
+  });
+}
+
+function calcCourseWinRates(matches) {
+  const courseStats = {};
+
+  matches.forEach(match => {
+    match.matchRows.forEach(row => {
+      const course = row[1];
+      const myScore = parseInt(row[3]);
+      const enemyScores = [
+        parseInt(row[6]),
+        parseInt(row[9]),
+        parseInt(row[12])
+      ].filter(n => !isNaN(n));
+
+      if (!course || isNaN(myScore)) return;
+
+      if (!courseStats[course]) {
+        courseStats[course] = { trials: 0, wins: 0, loses: 0, draws: 0 };
+      }
+
+      courseStats[course].trials++;
+
+      const isWin = enemyScores.length > 0 && enemyScores.every(s => myScore > s);
+      const isLose = enemyScores.length > 0 && enemyScores.every(s => myScore < s);
+
+      if (isWin) courseStats[course].wins++;
+      else if (isLose) courseStats[course].loses++;
+      else courseStats[course].draws++;
+    });
+  });
+
+  return courseStats;
+}
+
+let courseChart;
+
+function renderCourseWinRateChart(courseStats) {
+  const ctx = document.getElementById("courseChart");
+
+  if (courseChart) courseChart.destroy();
+
+  const labels = Object.keys(courseStats);
+  const winRates = labels.map(c => {
+    const s = courseStats[c];
+    return s.trials ? s.wins / s.trials : 0;
+  });
+
+  courseChart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        label: "コース別勝率",
+        data: winRates,
+        backgroundColor: "#4caf50"
+      }]
+    },
+    options: {
+      scales: {
+        y: { beginAtZero: true, max: 1 }
+      }
+    }
+  });
+}
+
+function calcEnemyWinRates(matches) {
+  const enemyStats = {};
+
+  matches.forEach(match => {
+    let enemies = [];
+
+    match.matchRows.forEach(row => {
+      if (Number(row[0]) === 1) {
+        enemies = [row[16], row[17], row[18]].filter(v => v);
+      }
+    });
+
+    match.matchRows.forEach(row => {
+      const myScore = parseInt(row[3]);
+      const enemyScores = [
+        parseInt(row[6]),
+        parseInt(row[9]),
+        parseInt(row[12])
+      ].filter(n => !isNaN(n));
+
+      if (isNaN(myScore)) return;
+
+      enemies.forEach(enemy => {
+        if (!enemyStats[enemy]) {
+          enemyStats[enemy] = { trials: 0, wins: 0, loses: 0, draws: 0 };
+        }
+
+        enemyStats[enemy].trials++;
+
+        const isWin = enemyScores.length > 0 && enemyScores.every(s => myScore > s);
+        const isLose = enemyScores.length > 0 && enemyScores.every(s => myScore < s);
+
+        if (isWin) enemyStats[enemy].wins++;
+        else if (isLose) enemyStats[enemy].loses++;
+        else enemyStats[enemy].draws++;
+      });
+    });
+  });
+
+  return enemyStats;
+}
+
+let enemyChart;
+
+function renderEnemyWinRateChart(enemyStats) {
+  const ctx = document.getElementById("enemyChart");
+
+  if (enemyChart) enemyChart.destroy();
+
+  const labels = Object.keys(enemyStats);
+  const winRates = labels.map(e => {
+    const s = enemyStats[e];
+    return s.trials ? s.wins / s.trials : 0;
+  });
+
+  enemyChart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        label: "敵チーム別勝率",
+        data: winRates,
+        backgroundColor: "#e91e63"
+      }]
+    },
+    options: {
+      scales: {
+        y: { beginAtZero: true, max: 1 }
+      }
+    }
+  });
+}
+
+function calcCourseEnemyMatrix(matches) {
+  const matrix = {};
+
+  matches.forEach(match => {
+    let enemies = [];
+
+    match.matchRows.forEach(row => {
+      if (Number(row[0]) === 1) {
+        enemies = [row[16], row[17], row[18]].filter(v => v);
+      }
+    });
+
+    match.matchRows.forEach(row => {
+      const course = row[1];
+      const myScore = parseInt(row[3]);
+      const enemyScores = [
+        parseInt(row[6]),
+        parseInt(row[9]),
+        parseInt(row[12])
+      ].filter(n => !isNaN(n));
+
+      if (!course || isNaN(myScore)) return;
+
+      if (!matrix[course]) matrix[course] = {};
+
+      enemies.forEach(enemy => {
+        if (!matrix[course][enemy]) {
+          matrix[course][enemy] = { trials: 0, wins: 0, loses: 0, draws: 0 };
+        }
+
+        matrix[course][enemy].trials++;
+
+        const isWin = enemyScores.length > 0 && enemyScores.every(s => myScore > s);
+        const isLose = enemyScores.length > 0 && enemyScores.every(s => myScore < s);
+
+        if (isWin) matrix[course][enemy].wins++;
+        else if (isLose) matrix[course][enemy].loses++;
+        else matrix[course][enemy].draws++;
+      });
+    });
+  });
+
+  return matrix;
+}
+
+let courseEnemyCharts = [];
+
+function renderCourseEnemyCharts(matrix) {
+  const container = document.getElementById("courseEnemyCharts");
+  container.innerHTML = "";
+
+  courseEnemyCharts.forEach(c => c.destroy());
+  courseEnemyCharts = [];
+
+  Object.keys(matrix).forEach(course => {
+    const enemies = Object.keys(matrix[course]);
+    const winRates = enemies.map(enemy => {
+      const s = matrix[course][enemy];
+      return s.trials ? s.wins / s.trials : 0;
+    });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 600;
+    canvas.height = 300;
+    container.appendChild(canvas);
+
+    const chart = new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: enemies,
+        datasets: [{
+          label: `${course} の敵チーム別勝率`,
+          data: winRates,
+          backgroundColor: "#9c27b0"
+        }]
+      },
+      options: {
+        scales: {
+          y: { beginAtZero: true, max: 1 }
+        }
+      }
+    });
+
+    courseEnemyCharts.push(chart);
+  });
+}
+
+function calcEnemyTimeline(matches) {
+  const timeline = {};
+
+  matches.forEach((match, idx) => {
+    let enemies = [];
+
+    match.matchRows.forEach(row => {
+      if (Number(row[0]) === 1) {
+        enemies = [row[16], row[17], row[18]].filter(v => v);
+      }
+    });
+
+    match.matchRows.forEach(row => {
+      const myScore = parseInt(row[3]);
+      const enemyScores = [
+        parseInt(row[6]),
+        parseInt(row[9]),
+        parseInt(row[12])
+      ].filter(n => !isNaN(n));
+
+      if (isNaN(myScore)) return;
+
+      enemies.forEach(enemy => {
+        if (!timeline[enemy]) timeline[enemy] = [];
+
+        const isWin = enemyScores.length > 0 && enemyScores.every(s => myScore > s);
+        const isLose = enemyScores.length > 0 && enemyScores.every(s => myScore < s);
+
+        let value = 0.5;
+        if (isWin) value = 1;
+        else if (isLose) value = 0;
+
+        timeline[enemy].push({
+          matchIndex: idx + 1,
+          value
+        });
+      });
+    });
+  });
+
+  return timeline;
+}
+
+let enemyTimelineChart;
+
+function renderEnemyTimelineChart(timeline) {
+  const ctx = document.getElementById("enemyTimelineChart");
+
+  if (enemyTimelineChart) enemyTimelineChart.destroy();
+
+  const enemies = Object.keys(timeline);
+
+  const datasets = enemies.map(enemy => ({
+    label: enemy,
+    data: timeline[enemy].map(p => p.value),
+    borderColor: "#" + Math.floor(Math.random() * 16777215).toString(16),
+    fill: false,
+    tension: 0.2
+  }));
+
+  const maxLength = Math.max(...enemies.map(e => timeline[e].length));
+  const labels = Array.from({ length: maxLength }, (_, i) => `試合${i + 1}`);
+
+  enemyTimelineChart = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: 1,
+          ticks: {
+            callback: v => {
+              if (v === 1) return "勝ち";
+              if (v === 0.5) return "引き分け";
+              if (v === 0) return "負け";
+              return v;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+function calcEnemyScoreTimeline(matches) {
+  const timeline = {};
+
+  matches.forEach((match, idx) => {
+    let enemies = [];
+
+    match.matchRows.forEach(row => {
+      if (Number(row[0]) === 1) {
+        enemies = [row[16], row[17], row[18]].filter(v => v);
+      }
+    });
+
+    match.matchRows.forEach(row => {
+      const enemyScores = [
+        parseInt(row[6]),
+        parseInt(row[9]),
+        parseInt(row[12])
+      ];
+
+      enemies.forEach((enemy, i) => {
+        const score = enemyScores[i];
+        if (isNaN(score)) return;
+
+        if (!timeline[enemy]) timeline[enemy] = [];
+
+        timeline[enemy].push({
+          matchIndex: idx + 1,
+          score
+        });
+      });
+    });
+  });
+
+  return timeline;
+}
+
+let enemyScoreChart;
+
+function renderEnemyScoreTimelineChart(timeline) {
+  const ctx = document.getElementById("enemyScoreTimelineChart");
+
+  if (enemyScoreChart) enemyScoreChart.destroy();
+
+  const enemies = Object.keys(timeline);
+
+  const datasets = enemies.map(enemy => ({
+    label: enemy,
+    data: timeline[enemy].map(p => p.score),
+    borderColor: "#" + Math.floor(Math.random() * 16777215).toString(16),
+    fill: false,
+    tension: 0.2
+  }));
+
+  const maxLength = Math.max(...enemies.map(e => timeline[e].length));
+  const labels = Array.from({ length: maxLength }, (_, i) => `試合${i + 1}`);
+
+  enemyScoreChart = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
     options: {
       scales: {
         y: { beginAtZero: true }
@@ -203,7 +611,22 @@ function applyFilters(allMatches) {
   renderMatches(filtered);
 
   const stats = calcStats(filtered);
-  renderChart(stats);
+  renderStatsChart(stats);
+
+  const courseStats = calcCourseWinRates(filtered);
+  renderCourseWinRateChart(courseStats);
+
+  const enemyStats = calcEnemyWinRates(filtered);
+  renderEnemyWinRateChart(enemyStats);
+
+  const matrix = calcCourseEnemyMatrix(filtered);
+  renderCourseEnemyCharts(matrix);
+
+  const timeline = calcEnemyTimeline(filtered);
+  renderEnemyTimelineChart(timeline);
+
+  const enemyScoreTimeline = calcEnemyScoreTimeline(filtered);
+  renderEnemyScoreTimelineChart(enemyScoreTimeline);
 }
 
 (async () => {
@@ -211,7 +634,12 @@ function applyFilters(allMatches) {
   populateFilters(matches);
 
   renderMatches(matches);
-  renderChart(calcStats(matches));
+  renderStatsChart(calcStats(matches));
+  renderCourseWinRateChart(calcCourseWinRates(matches));
+  renderEnemyWinRateChart(calcEnemyWinRates(matches));
+  renderCourseEnemyCharts(calcCourseEnemyMatrix(matches));
+  renderEnemyTimelineChart(calcEnemyTimeline(matches));
+  renderEnemyScoreTimelineChart(calcEnemyScoreTimeline(matches));
 
   ["filterMyTeam", "filterEnemy", "filterFormat", "filterCourse"].forEach(id => {
     document.getElementById(id).addEventListener("change", () => applyFilters(matches));
